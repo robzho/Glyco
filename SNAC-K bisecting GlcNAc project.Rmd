@@ -1,0 +1,1762 @@
+---
+title: "SNAC-K glycan paper analysis and figures"
+author: "Robin Zhou"
+date: '2026-10-24'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r load package}
+library (haven)
+library (dplyr)
+library (tidyr)
+library (readxl)
+library (ggplot2)
+library (ggpubr)
+library (DescTools)
+library (gtsummary)
+library (gt)
+library (broom)
+library (purrr)
+library (survival)
+library (survminer)
+library (stringr)
+library (lubridate)
+library (lmerTest)
+library (ggeffects)
+library (lme4)
+library (tidyverse)
+library (rms)
+library (quantreg)
+library (tidycmprsk)
+```
+
+# Merge data
+
+```{r Load data}
+
+#Import all data
+key <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Glycans whole cohort/SNACK glycans full with lopnr.dta")
+names(key)[10] <- "Lopnr"
+biomarkers <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/Biomarkers AD ptau217.dta")
+bloods <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/Biomarkers baseline SNACK.dta")
+bp <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/Blood pressure baseline.dta")
+dementia <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/Dementia in SNACK for Robin.dta")
+diseases <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/Diseases for Robin baseline.dta")
+demographics <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/Variables baseline for Robin.dta")
+longitudinal_data <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/MMSE best.dta")
+longitudinal_data <- subset(longitudinal_data, select = -MMSE_best0)
+apoe_alleles <- read_dta("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/Project/04 SNAC-K project/Risk score project/Raw data/APOE alleles.dta")
+apoe_alleles <- subset(apoe_alleles, select = c("löpnr", "E2_E3_E4_2014"))
+names(apoe_alleles)[1] <- "Lopnr"
+names(apoe_alleles)[2] <- "apoe"
+
+# Merge by ID
+snac <- Reduce(function(x, y) merge(x, y, by = "Lopnr", all = TRUE), 
+               list(biomarkers, bloods, bp, dementia, diseases, demographics,longitudinal_data, key,                      apoe_alleles))
+```
+
+# Quality control
+
+```{r quality control}
+
+# Format glycans as numeric
+snac$CV <- as.numeric(snac$CV)
+snac$PhaE <- as.numeric(snac$PhaE)
+
+# Distribution of CVs
+# Calculate Mean and SD
+mu <- mean(snac$CV, na.rm = TRUE)
+sigma <- sd(snac$CV, na.rm = TRUE)
+
+# Create the Plot
+ggplot(snac, aes(x = CV)) +
+  
+  # Histogram 
+  geom_histogram(aes(y = after_stat(density)), 
+                 binwidth = 1,           
+                 colour = "black",         
+                 fill = "lightgrey") +    
+  
+  # Density Plot
+  geom_density(alpha = 0.2, 
+               fill = "#FF6666", 
+               color = "red", 
+               linewidth = 1) +
+  
+  # Vertical line at 20%
+  geom_vline(aes(xintercept = 20), 
+             color = "red", linetype = "dashed", linewidth = 0.8) +
+  
+  # Formatting
+  theme_bw() +
+  labs(title = "Distribution of CVs",
+       subtitle = paste0("Mean = ", round(mu, 2), ", SD = ", round(sigma, 2)),
+       x = "Coefficient of variation [%]",
+       y = "Density")
+
+# CV by plate
+plot_data <- snac %>%
+  filter(!is.na(Storage_unit))
+
+# Create Boxplot
+ggplot(plot_data, aes(x = Storage_unit, y = CV, fill = Storage_unit)) +
+  
+  # Boxplot
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  
+  # Individual Points
+  geom_jitter(width = 0.2, alpha = 0.4, color = "darkgrey") +
+  
+  # Line at y = 20
+  geom_hline(aes(yintercept = 20), 
+             color = "red", linetype = "dashed", size = 0.8) +
+  
+  # Formatting
+  theme_bw() +
+  labs(
+    x = "Plate ID",
+    y = "Coefficient of variation [%]",
+    title = "CV by Plate",
+    fill = "Plate ID"
+  ) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+#Bisecting GlcNAc by plate
+
+# Create Boxplot
+ggplot(plot_data, aes(x = Storage_unit, y = PhaE, fill = Storage_unit)) +
+  
+  # Boxplot
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) + 
+  
+  # Individual Points
+  geom_jitter(width = 0.2, alpha = 0.4, color = "darkgrey") +
+  
+  # Formatting
+  theme_bw() +
+  labs(
+    x = "Plate ID",
+    y = "Bisecting GlcNAc [ratio to pool]",
+    title = "Bisecting GlcNAc by Plate",
+    fill = "Plate ID"
+  ) +
+  theme(legend.position = "none") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# Bisecting GlcNAc and CV by plate position
+
+# Prepare data
+plot_data_wide <- snac %>%
+  mutate(
+    Row = str_extract(Position, "[A-H]"),
+    Col = as.numeric(str_extract(Position, "\\d+"))
+  ) %>%
+  group_by(Row, Col, Position) %>%
+  summarise(
+    # Calculate both Mean and SD
+    PhaE_Mean = mean(PhaE, na.rm = TRUE),
+    PhaE_SD   = sd(PhaE,   na.rm = TRUE),
+    CV_Mean   = mean(CV,   na.rm = TRUE),
+    CV_SD     = sd(CV,     na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Row = factor(Row, levels = rev(LETTERS[1:8]))
+  )
+
+# Plotting function
+create_plate_plot <- function(data, mean_var, sd_var, title_text) {
+  
+  ggplot(data, aes(x = Col, y = Row, fill = .data[[mean_var]])) +
+    
+    # Heatmap
+    geom_tile(color = "white", size = 0.5) +
+    
+    # Text labels
+    geom_text(
+      aes(label = paste0(round(.data[[mean_var]], 1), "\n(±", round(.data[[sd_var]], 1), ")")), 
+      size = 4,         
+      color = "white",     
+      fontface = "bold"
+    ) +
+    
+    # Formatting
+    coord_fixed() + 
+    scale_x_continuous(breaks = 1:12) +
+    scale_fill_viridis_c(option = "cividis") + 
+    theme_minimal() +
+    labs(title = title_text, x = NULL, y = NULL, fill = "") +
+    theme(panel.grid = element_blank())
+}
+
+# Generate plots
+p1 <- create_plate_plot(plot_data_wide, "PhaE_Mean", "PhaE_SD", "PhaE Mean (±SD)")
+p2 <- create_plate_plot(plot_data_wide, "CV_Mean",   "CV_SD",   "CV Mean [%] (±SD)")
+
+ggarrange(p1, p2, ncol = 1, nrow = 2)
+```
+
+# Format variables
+
+```{r Format variables}
+
+#Format biomarkers as numeric
+
+snac$abetaratio <- as.numeric(snac$abetaratio)
+snac$ptau181 <- as.numeric(snac$ptau181)
+snac$ptau217 <- as.numeric(snac$ptau217)
+snac$ttau <- as.numeric(snac$ttau)
+snac$nfl <- as.numeric(snac$nfl)
+snac$gfap <- as.numeric(snac$gfap)
+snac$iiGFR <- as.numeric(snac$iiGFR)
+
+#Introduce biomarker cutoff points
+
+snac$ptau217_positive <- ifelse(snac$ptau217 >= 0.134, 1,
+                                ifelse(snac$ptau217 < 0.134, 0, NA))
+snac$ptau181_positive <- ifelse(snac$ptau181 >= 1.512, 1,
+                                ifelse(snac$ptau181 < 1.512, 0, NA))
+snac$nfl_positive <- ifelse(snac$nfl >= 20.171, 1,
+                            ifelse(snac$nfl < 20.171, 0, NA))
+snac$gfap_positive <- ifelse(snac$gfap >= 142.515, 1,
+                             ifelse(snac$gfap < 142.515, 0, NA))
+snac$ttau_positive <- ifelse(snac$ttau >= 0.832, 1,
+                             ifelse(snac$ttau < 0.832, 0, NA))
+snac$abeta_positive <- ifelse(snac$abetaratio <= 0.057, 1,
+                              ifelse(snac$abetaratio > 0.057, 0, NA))
+
+#Remove glycan NAs, remove CV > 20%, remove glycan < 0.1
+
+snac <- drop_na(snac, "PhaE")
+snac <- subset(snac, CV < 20)
+snac <- subset(snac, PhaE > 0.1)
+
+#Remove blood samples not matched to any individual in SNAC-K (by excluding by age)
+snac <- drop_na(snac, "age")
+
+# Drop individuals with dementia at baseline or no dementia assessment at baseline
+snac <- subset(snac, dementia_def22 != 1) # dementia at baseline
+snac <- subset(snac, dementia_def22 != 99) # no dementia assessment at baseline
+
+#z-transform biomarkers
+snac$PhaE_z <- scale(snac$PhaE)
+snac$PhaE_z <- as.numeric(snac$PhaE_z)
+snac$abetaratio_z <- scale(snac$abetaratio)
+snac$ptau181_z <- scale(snac$ptau181)
+snac$ptau217_z <- scale(snac$ptau217)
+snac$ttau_z <- scale(snac$ttau)
+snac$nfl_z <- scale(snac$nfl)
+snac$gfap_z <- scale(snac$gfap)
+snac$iiGFR_z <- scale(snac$iiGFR)
+```
+
+
+# Baseline cohort summary statistics
+
+```{r summary statistics}
+
+# Convert factors
+df_clean <- snac %>%
+  mutate(
+    # Convert Sex
+    sex = factor(sex, 
+                 levels = c(0, 1), 
+                 labels = c("Male", "Female")),
+    
+    # Convert Education
+    educ3trnew = factor(educ3trnew, 
+                        levels = c(1, 2, 3), 
+                        labels = c("Elementary School", 
+                                   "High School", 
+                                   "University")),
+    
+    # Convert APOE4
+    AnyE4_2014 = factor(AnyE4_2014, 
+                        levels = c(0, 1), 
+                        labels = c("Non-carrier", "Carrier")),
+    
+    # Hypertension
+    BLHypertension = factor(BLHypertension, 
+                     levels = c(0, 1), 
+                     labels = c("No Hypertension", "Hypertension")),
+    
+    # Diabetes
+    BLDiabetes = factor(BLDiabetes, 
+                     levels = c(0, 1), 
+                     labels = c("No Diabetes", "Diabetes")),
+    
+    #Convert Smoking status
+    smoking = case_when(
+      R_SMOKE == 2 ~ "Smoker",
+      R_SMOKE %in% c(0,1) ~ "Non-smoker"),
+    
+    #Convert Dementia status
+    dementia_recoded = case_when(
+      dementia_def22 == 0 ~ "No dementia",
+      dementia_def22 == 1 ~ "Dementia at baseline",
+      dementia_def22 %in% c(2, 3, 4, 5, 6, 7, 8) ~ "Dementia during follow-up", 
+      dementia_def22 == 99 ~ NA_character_ 
+    ),
+    
+    # Set factor levels to control the order in the table
+    dementia_recoded = factor(dementia_recoded, 
+                              levels = c("No dementia", 
+                                         "Dementia at baseline", 
+                                         "Dementia during follow-up"))
+  )
+
+# Generate table
+table1 <- df_clean %>%
+  select(age, sex, educ3trnew, AnyE4_2014, BLHypertension, BLDiabetes, smoking, dementia_recoded, MMSE_best0, ptau217, ptau181, ttau, gfap, nfl, abetaratio, PhaE) %>%
+  tbl_summary(
+    label = list(
+      age ~ "Age (years)",
+      sex ~ "Sex",
+      educ3trnew ~ "Education Level",
+      AnyE4_2014 ~ "APOE4 Status",
+      BLHypertension ~ "Hypertension",
+      BLDiabetes ~ "Diabetes",
+      smoking ~ "Smoking",
+      dementia_recoded ~ "Dementia Status",
+      MMSE_best0 ~ "MMSE Score",
+      ptau217 ~ "Blood p-tau217 [pg/mL]",
+      ptau181 ~ "Blood p-tau181 [pg/mL]",
+      ttau ~ "Blood total tau [pg/mL]",
+      gfap ~ "Blood GFAP [pg/mL]",
+      nfl ~ "Blood NFL [pg/mL]",
+      abetaratio ~ "Blood Aβ42/Aβ40 [ratio]",
+      PhaE ~ "Blood bisecting GlcNAc [ratio to pool]"
+    ),
+    statistic = list(
+      all_continuous() ~ "{median} ({p25}, {p75})"
+    ),
+    missing = "no" 
+  ) %>%
+  
+  # Adds a column showing exactly how many observations exist (N)
+  add_n() %>% 
+  bold_labels() 
+
+# Print the table
+table1
+```
+
+# Baseline characteristics stratified by APOE4
+
+```{r baseline apoe4}
+
+# Clean and factorize data
+df_clean <- snac %>%
+  mutate(
+    # Convert Sex
+    sex = factor(sex, 
+                 levels = c(0, 1), 
+                 labels = c("Male", "Female")),
+    
+    # Convert Education
+    educ3trnew = factor(educ3trnew, 
+                        levels = c(1, 2, 3), 
+                        labels = c("Elementary School", 
+                                   "High School", 
+                                   "University")),
+    
+    # Convert APOE4
+    AnyE4_2014 = factor(AnyE4_2014, 
+                        levels = c(0, 1), 
+                        labels = c("Non-carrier", "Carrier")),
+    
+    # Hypertension
+    BLHypertension = factor(BLHypertension, 
+                     levels = c(0, 1), 
+                     labels = c("No Hypertension", "Hypertension")),
+    
+    # Diabetes
+    BLDiabetes = factor(BLDiabetes, 
+                     levels = c(0, 1), 
+                     labels = c("No Diabetes", "Diabetes")),
+    
+    #Convert Smoking status
+    smoking = case_when(
+      R_SMOKE == 2 ~ "Smoker",
+      R_SMOKE %in% c(0,1) ~ "Non-smoker"),
+    
+    # Convert Dementia status
+    dementia_recoded = case_when(
+      dementia_def22 == 0 ~ "No dementia",
+      dementia_def22 %in% c(2, 3, 4, 5, 6, 7, 8) ~ "Dementia during follow-up", 
+      dementia_def22 == 99 ~ NA_character_ 
+    ),
+    
+    # Set factor levels to control the order in the table
+    dementia_recoded = factor(dementia_recoded, 
+                              levels = c("No dementia", 
+                                         "Dementia during follow-up"))
+  )
+
+#  Generate Stratified Table
+table1 <- df_clean %>%
+  select(age, sex, educ3trnew, BLHypertension, BLDiabetes, smoking, dementia_recoded, MMSE_best0, 
+         ptau217, ptau181, ttau, gfap, nfl, abetaratio, PhaE, AnyE4_2014) %>%
+  
+  tbl_summary(
+    by = AnyE4_2014,
+    label = list(
+      age ~ "Age (years)",
+      sex ~ "Sex",
+      educ3trnew ~ "Education Level",
+      BLHypertension ~ "Hypertension",
+      BLDiabetes ~ "Diabetes",
+      smoking ~ "Smoking",
+      dementia_recoded ~ "Dementia Status",
+      MMSE_best0 ~ "MMSE Score",
+      ptau217 ~ "Blood p-tau217 [pg/mL]",
+      ptau181 ~ "Blood p-tau181 [pg/mL]",
+      ttau ~ "Blood total tau [pg/mL]",
+      gfap ~ "Blood GFAP [pg/mL]",
+      nfl ~ "Blood NFL [pg/mL]",
+      abetaratio ~ "Blood Aβ42/Aβ40 [ratio]",
+      PhaE ~ "Blood bisecting GlcNAc [ratio to pool]"
+    ),
+    statistic = list(
+      all_continuous() ~ "{median} ({p25}, {p75})"
+    ),
+    missing = "no" 
+  ) %>%
+  
+  # Add "Overall" column
+  add_overall() %>%
+  
+  # Add P-values comparing Non-carrier vs Carrier
+  add_p() %>%
+  
+  # Add N count column
+  add_n() %>% 
+  bold_labels()
+
+# Print table
+table1
+```
+
+# Baseline characteristics stratified by sex
+
+```{r table by sex}
+
+# Clean and factorize data
+df_clean <- snac %>%
+  mutate(
+    # Convert Sex
+    sex = factor(sex, 
+                 levels = c(0, 1), 
+                 labels = c("Male", "Female")),
+    
+    # Convert Education
+    educ3trnew = factor(educ3trnew, 
+                        levels = c(1, 2, 3), 
+                        labels = c("Elementary School", 
+                                   "High School", 
+                                   "University")),
+    
+    # Convert APOE4
+    AnyE4_2014 = factor(AnyE4_2014, 
+                        levels = c(0, 1), 
+                        labels = c("Non-carrier", "Carrier")),
+    
+    # Hypertension
+    BLHypertension = factor(BLHypertension, 
+                            levels = c(0, 1), 
+                            labels = c("No Hypertension", "Hypertension")),
+    
+    # Diabetes
+    BLDiabetes = factor(BLDiabetes, 
+                        levels = c(0, 1), 
+                        labels = c("No Diabetes", "Diabetes")),
+    
+    # Convert Smoking status
+    smoking = case_when(
+      R_SMOKE == 2 ~ "Smoker",
+      R_SMOKE %in% c(0, 1) ~ "Non-smoker"
+    ),
+    
+    # Convert Dementia status
+    dementia_recoded = case_when(
+      dementia_def22 == 0 ~ "No dementia",
+      dementia_def22 %in% c(2, 3, 4, 5, 6, 7, 8) ~ "Dementia during follow-up", 
+      dementia_def22 == 99 ~ NA_character_ 
+    ),
+    dementia_recoded = factor(dementia_recoded, 
+                              levels = c("No dementia", 
+                                         "Dementia during follow-up"))
+  )
+
+# Generate table stratified by Sex
+table2 <- df_clean %>%
+  select(age, AnyE4_2014, educ3trnew, BLHypertension, BLDiabetes, smoking, 
+         dementia_recoded, MMSE_best0, ptau217, ptau181, ttau, gfap, 
+         nfl, abetaratio, PhaE, sex) %>%
+  tbl_summary(
+    by = sex,
+    label = list(
+      age ~ "Age (years)",
+      AnyE4_2014 ~ "APOE ε4 Status",
+      educ3trnew ~ "Education Level",
+      BLHypertension ~ "Hypertension",
+      BLDiabetes ~ "Diabetes",
+      smoking ~ "Smoking",
+      dementia_recoded ~ "Dementia Status",
+      MMSE_best0 ~ "MMSE Score",
+      ptau217 ~ "Blood p-tau217 [pg/mL]",
+      ptau181 ~ "Blood p-tau181 [pg/mL]",
+      ttau ~ "Blood total tau [pg/mL]",
+      gfap ~ "Blood GFAP [pg/mL]",
+      nfl ~ "Blood NFL [pg/mL]",
+      abetaratio ~ "Blood Aβ42/Aβ40 [ratio]",
+      PhaE ~ "Blood bisecting GlcNAc [ratio to pool]"
+    ),
+    statistic = list(
+      all_continuous() ~ "{median} ({p25}, {p75})"
+    ),
+    missing = "no"
+  ) %>%
+  add_overall() %>%
+  add_p() %>%
+  add_n() %>%
+  bold_labels()
+
+# Show table
+table2
+```
+
+# Bisecting GlcNAc correlations with demographic and clinical factors
+
+```{r distribution}
+
+# Calculate Mean and SD
+mu <- mean(snac$PhaE_z, na.rm = TRUE)
+sigma <- sd(snac$PhaE_z, na.rm = TRUE)
+
+# Create the Plot
+ggplot(snac, aes(x = PhaE_z)) +
+  
+  # Histogram
+  geom_histogram(aes(y = after_stat(density)), 
+                 binwidth = 0.5,          
+                 colour = "black",        
+                 fill = "lightgrey") +    
+  
+  # Superimposed Normal Curve
+  stat_function(fun = dnorm, 
+                args = list(mean = mu, sd = sigma), 
+                color = "red", 
+                size = 1) +
+  
+  # Vertical line at the mean
+  geom_vline(aes(xintercept = mu), 
+             color = "red", linetype = "dashed", size = 0.8) +
+  
+  # Formatting
+  theme_bw() +
+  labs(title = "Distribution of bisecting GlcNAc (z-score)",
+       subtitle = paste0("Mean = ", round(mu, 2), ", SD = ", round(sigma, 2)),
+       x = "Bisecting GlcNAc [z-score]",
+       y = "Density")
+```
+
+```{r age and kidney function correlations}
+
+#Correlation with age
+ggplot(snac, aes(x = age, y = PhaE_z)) +
+  
+  # Scatter Points
+  geom_point(alpha = 0.6, color = "darkgrey") + 
+  
+  # Regression Line with 95% CI
+  geom_smooth(
+    method = "lm", 
+    formula = y ~ x, 
+    color = "black", 
+    fill = "grey60",
+    se = TRUE,  
+    alpha = 0.5
+  ) +
+  
+  # Pearson Correlation (Black, Top Left)
+  stat_cor(
+    method = "pearson", 
+    label.x.npc = "left", 
+    label.y.npc = 1.0, 
+    size = 4, 
+    color = "black"
+  ) +
+  
+  # Spearman Correlation (Red, Below Pearson)
+  stat_cor(
+    method = "spearman", 
+    label.x.npc = "left", 
+    label.y.npc = 0.90, 
+    size = 4, 
+    color = "red"
+  ) +
+  
+  # Formatting
+  theme_bw() +
+  labs(
+    x = "Age [years]",
+    y = "Bisecting GlcNAc [z-score]",
+    caption = "Black: Pearson's r | Red: Spearman's rho"
+  )
+
+#Correlation with kidney function
+ggplot(snac, aes(x = iiGFR, y = PhaE_z)) +
+  
+  # Scatter Points
+  geom_point(alpha = 0.6, color = "darkgrey") + 
+  
+  # Regression Line with 95% CI
+  geom_smooth(
+    method = "lm", 
+    formula = y ~ x, 
+    color = "black", 
+    fill = "grey60",
+    se = TRUE,      
+    alpha = 0.5
+  ) +
+  
+  # Pearson Correlation (Black, Top Left)
+  stat_cor(
+    method = "pearson", 
+    label.x.npc = "left", 
+    label.y.npc = 1.0, 
+    size = 4, 
+    color = "black"
+  ) +
+  
+  # Spearman Correlation (Red, Below Pearson)
+  stat_cor(
+    method = "spearman", 
+    label.x.npc = "left", 
+    label.y.npc = 0.90, 
+    size = 4, 
+    color = "red"
+  ) +
+  
+  # Formatting
+  theme_bw() +
+  labs(
+    x = "GFR [ml/min]",
+    y = "Bisecting GlcNAc [z-score]",
+    caption = "Black: Pearson's r | Red: Spearman's rho"
+  )
+
+```
+
+```{r sex and dementia status boxplots}
+
+# Boxplot by sex
+# Label sex
+plot_data <- snac %>%
+  filter(!is.na(sex)) %>%
+  mutate(
+    sex_label = factor(sex, 
+                       levels = c(0, 1), 
+                       labels = c("Male", "Female"))
+  )
+
+# Create Boxplot with T-test
+ggplot(plot_data, aes(x = sex_label, y = PhaE_z, fill = sex_label)) +
+  
+  # Boxplot
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  
+  # Individual Points
+  geom_jitter(width = 0.2, alpha = 0.4, color = "darkgrey") +
+  
+  # t-test (Unpaired, Two-tailed)
+  stat_compare_means(
+    method = "t.test",      
+    paired = FALSE,         
+    label.x.npc = "center", 
+    size = 4
+  ) +
+  
+  # Formatting
+  scale_fill_manual(values = c("Male" = "#377eb8", "Female" = "#e41a1c")) +
+  theme_bw() +
+  labs(
+    x = "",
+    y = "Bisecting GlcNAc [z-score]",
+    title = "",
+    fill = "Sex"
+  ) +
+  theme(legend.position = "none")
+
+#Boxplot by dementia status
+
+# Define dementia status
+plot_data <- snac %>%
+  mutate(
+    dementia_recoded = case_when(
+      dementia_def22 == 0 ~ "No dementia",
+      dementia_def22 %in% c(2, 3, 4, 5, 6, 7, 8) ~ "Dementia during follow-up",
+      TRUE ~ NA_character_
+    ),
+    dementia_recoded = factor(dementia_recoded, 
+                              levels = c("No dementia", 
+                                         "Dementia during follow-up"))
+  ) %>%
+  filter(!is.na(dementia_recoded))
+
+# Create plot
+ggplot(plot_data, aes(x = dementia_recoded, y = PhaE_z, fill = dementia_recoded)) +
+  
+  # Boxplot with Jitter
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.2, color = "darkgrey") +
+   
+  # t-test (Unpaired, Two-tailed)
+  stat_compare_means(
+    method = "t.test",      
+    paired = FALSE,         
+    label.x.npc = "center", 
+    size = 4
+  ) +
+  
+  # Formatting
+  theme_bw() +
+  scale_fill_brewer(palette = "Set2") + 
+  labs(
+    x = "",
+    y = "Bisecting GlcNAc [z-score]",
+    title = "",
+    fill = "Status"
+  ) +
+  theme(legend.position = "none")
+```
+```{r cardiovascular risk factor boxplots}
+
+# Boxplot by hypertension
+plot_data <- snac %>%
+  filter(!is.na(BLHypertension)) %>%
+  mutate(
+    hypertension_label = factor(BLHypertension, 
+                       levels = c(0, 1), 
+                       labels = c("No hypertension", "Hypertension"))
+  )
+
+ggplot(plot_data, aes(x = hypertension_label, y = PhaE_z, fill = hypertension_label)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, color = "darkgrey") +
+  # t-test (Unpaired, Two-tailed)
+  stat_compare_means(
+    method = "t.test",      
+    paired = FALSE,         
+    label.x.npc = "center", 
+    size = 4
+  ) +
+  # Formatting
+  scale_fill_manual(values = c("No hypertension" = "#377eb8", "Hypertension" = "#e41a1c")) +
+  theme_bw() +
+  labs(
+    x = "",
+    y = "Bisecting GlcNAc [z-score]",
+    title = "",
+    fill = "Hypertension"
+  ) +
+  theme(legend.position = "none")
+
+# Boxplot by Diabetes
+
+plot_data <- snac %>%
+  filter(!is.na(BLDiabetes)) %>%
+  mutate(
+    diabetes_label = factor(BLDiabetes, 
+                       levels = c(0, 1), 
+                       labels = c("No diabetes", "Diabetes"))
+  )
+
+ggplot(plot_data, aes(x = diabetes_label, y = PhaE_z, fill = diabetes_label)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, color = "darkgrey") +
+  stat_compare_means(
+    method = "t.test",      
+    paired = FALSE,         
+    label.x.npc = "center", 
+    size = 4
+  ) +
+  # Formatting
+  scale_fill_manual(values = c("No diabetes" = "#377eb8", "Diabetes" = "#e41a1c")) +
+  theme_bw() +
+  labs(
+    x = "",
+    y = "Bisecting GlcNAc [z-score]",
+    title = "",
+    fill = "Diabetes"
+  ) +
+  theme(legend.position = "none")
+
+# Boxplot by smoking
+plot_data <- snac %>%
+  filter(!is.na(R_SMOKE)) %>%
+  mutate(
+    smoking_label = case_when(
+      R_SMOKE %in% c(0, 1) ~ "Non-smoker",
+      R_SMOKE == 2         ~ "Smoker",
+      TRUE                 ~ NA_character_
+    ),
+    smoking_label = factor(smoking_label, levels = c("Non-smoker", "Smoker"))
+  ) %>%
+  filter(!is.na(smoking_label))
+
+ggplot(plot_data, aes(x = smoking_label, y = PhaE_z, fill = smoking_label)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, color = "darkgrey") +
+  stat_compare_means(
+    method = "t.test",      
+    paired = FALSE,         
+    label.x.npc = "center", 
+    size = 4
+  ) +
+  
+  # Formatting
+  scale_fill_manual(values = c("Non-smoker" = "#377eb8", "Smoker" = "#e41a1c")) +
+  theme_bw() +
+  labs(
+    x = "",
+    y = "Bisecting GlcNAc [z-score]",
+    title = "",
+    fill = "Smoking Status"
+  ) +
+  theme(legend.position = "none")
+```
+
+# Bisecting GlcNAc correlations with biomarkers
+
+```{r heatmap}
+
+# Define Variables
+biomarkers <- c("abetaratio_z", "ptau181_z", "ptau217_z", "ttau_z", "nfl_z", "gfap_z")
+predictor  <- "PhaE_z"
+
+# Helper function for significance stars based on adjusted p-values
+get_stars <- function(p) {
+  case_when(
+    p < 0.0001 ~ "****",
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    TRUE      ~ ""
+  )
+}
+
+# Correlation Function
+get_corrs <- function(data, label) {
+  map_dfr(biomarkers, function(bm) {
+    test <- cor.test(data[[predictor]], data[[bm]], method = "spearman", exact = FALSE)
+    
+    tibble(
+      Biomarker = bm,
+      rho       = unname(test$estimate),
+      p_raw     = test$p.value,
+      Group     = label
+    )
+  })
+}
+
+# Compute and Apply Multiple Comparison Correction
+summary_df <- bind_rows(
+  get_corrs(snac, "Whole Cohort"),
+  get_corrs(snac %>% filter(AnyE4_2014 == 1), "E4 Carriers"),
+  get_corrs(snac %>% filter(AnyE4_2014 == 0), "E4 Non-Carriers")
+) %>%
+  mutate(
+    p_adj = p.adjust(p_raw, method = "BH"),  # or "bonferroni", "holm", "BY"
+    stars = get_stars(p_adj),
+    cell_label = paste0(sprintf("%.2f", rho), stars)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    Group = factor(Group, levels = c("Whole Cohort", "E4 Carriers", "E4 Non-Carriers")),
+    Biomarker = factor(Biomarker, levels = rev(biomarkers))
+  )
+
+# Plot Heatmap
+ggplot(summary_df, aes(x = Group, y = Biomarker, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_distiller(palette = "RdBu", limit = c(-1, 1), name = "Spearman's rho") +
+  geom_text(aes(label = cell_label), color = "black", size = 4) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(face = "bold", size = 11),
+    axis.text.y = element_text(size = 10),
+    panel.grid = element_blank()
+  )
+```
+
+# Exploratory analysis 1: Biomarker correlations by allele dosage
+
+```{r allele dosage correlations}
+
+# Define Variables
+biomarkers <- c("abetaratio_z", "ptau181_z", "ptau217_z", "ttau_z", "nfl_z", "gfap_z")
+predictor  <- "PhaE_z"
+genotypes  <- c("E2/E4", "E3/E4", "E4/E4")
+
+# Helper function for significance stars based on adjusted p-values
+get_stars <- function(p) {
+  case_when(
+    p < 0.0001 ~ "****",
+    p < 0.001  ~ "***",
+    p < 0.01   ~ "**",
+    p < 0.05   ~ "*",
+    TRUE       ~ ""
+  )
+}
+
+# Correlation Function
+get_corrs <- function(data, label) {
+  map_dfr(biomarkers, function(bm) {
+    valid_data <- data %>% filter(!is.na(.data[[predictor]]), !is.na(.data[[bm]]))
+    n_obs <- nrow(valid_data)
+    
+    if (n_obs >= 3) {
+      test    <- cor.test(valid_data[[predictor]], valid_data[[bm]], method = "spearman", exact = FALSE)
+      rho_val <- unname(test$estimate)
+      p_val   <- test$p.value
+    } else {
+      rho_val <- NA_real_
+      p_val   <- NA_real_
+    }
+    
+    tibble(
+      Biomarker = bm,
+      rho       = rho_val,
+      p_raw     = p_val,
+      n         = n_obs,
+      Group     = label
+    )
+  })
+}
+
+# Calculate group sample sizes for X-axis labels: "Genotype\n(n = X)"
+group_labels <- map_chr(genotypes, function(gt) {
+  n_total <- snac %>% 
+    filter(apoe == gt, !is.na(.data[[predictor]])) %>% 
+    nrow()
+  paste0(gt, "\n(n = ", n_total, ")")
+})
+names(group_labels) <- genotypes
+
+# Compute, Correct across all comparisons, and format labels
+summary_df <- map_dfr(genotypes, ~ get_corrs(snac %>% filter(apoe == .x), .x)) %>%
+  mutate(
+    p_adj      = p.adjust(p_raw, method = "BH"),
+    stars      = get_stars(p_adj),
+    cell_label = if_else(!is.na(rho), paste0(sprintf("%.2f", rho), stars), "NA"),
+    Group_Label = factor(group_labels[Group], levels = group_labels),
+    Biomarker   = factor(Biomarker, levels = rev(biomarkers))
+  )
+
+# Plot Heatmap
+ggplot(summary_df, aes(x = Group_Label, y = Biomarker, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_distiller(
+    palette  = "RdBu", 
+    limit    = c(-1, 1), 
+    name     = "Spearman's rho",
+    na.value = "grey90"
+  ) +
+  geom_text(aes(label = cell_label), color = "black", size = 4) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(face = "bold", size = 11),
+    axis.text.y = element_text(size = 10),
+    panel.grid  = element_blank()
+  )
+```
+
+
+# Longitudinal cognition
+
+```{r longitudinal cognition}
+
+# Median split to define glycan positivity
+med_val <- median(snac$PhaE, na.rm = TRUE)
+snac$glycan_positive <- ifelse(snac$PhaE > med_val, 1, 0)
+
+df_long <- snac %>%
+  
+  # pre-cleaning
+  ungroup() %>% 
+  distinct(Lopnr, .keep_all = TRUE) %>% 
+  
+  # rename and pivot
+  rename(
+    MMSE_wave1 = MMSE_best0,
+    MMSE_wave2 = MMSE_best1,
+    MMSE_wave3 = MMSE_best2,
+    MMSE_wave4 = MMSE_best3,
+    MMSE_wave5 = MMSE_best4,
+    MMSE_wave6 = MMSE_best5
+  ) %>%
+  pivot_longer(
+    cols = c(starts_with("MMSE"), starts_with("date")),
+    names_to = c(".value", "wave"), 
+    names_pattern = "(.*)_wave(\\d)" 
+  ) %>%
+  
+  # formatting
+  mutate(
+    date = as.Date(date),
+    wave = as.numeric(wave),
+    MMSE = as.numeric(MMSE) # Ensure scores are numeric
+  ) %>%
+  
+  # calculate time
+  group_by(Lopnr) %>%
+  mutate(
+    baseline_date = date[wave == 1][1], 
+    time_years = if_else(is.na(baseline_date), NA_real_, 
+                         as.numeric(difftime(date, baseline_date, units = "days")) / 365.25)
+  ) %>%
+  ungroup() %>%
+
+  # Remove MMSE NAs
+  mutate(MMSE = na_if(MMSE, 0)) %>%  # treat 0 as NA
+  filter(!is.na(MMSE))              
+
+
+# Linear mixed models
+
+# Standardized optimizer control
+ctrl <- lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+
+# Whole cohort analysis
+model <- lmer(
+  MMSE ~ time_years * glycan_positive + age + sex + educ3trnew + 
+    gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = df_long,
+  REML = TRUE,
+  control = ctrl
+)
+summary(model)
+
+# Stratify whole cohort by glycan status
+whole_pos <- subset(df_long, glycan_positive == "1")
+whole_neg <- subset(df_long, glycan_positive == "0")
+
+posmodel_whole <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = whole_pos,
+  REML = FALSE,
+  control = ctrl
+)
+pos_pred_whole <- ggpredict(posmodel_whole, terms = "time_years [all]")
+
+negmodel_whole <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = whole_neg,
+  REML = FALSE,
+  control = ctrl
+)
+neg_pred_whole <- ggpredict(negmodel_whole, terms = "time_years [all]")
+
+plot_main <- ggplot() + 
+  geom_line(data = pos_pred_whole, aes(x = x, y = predicted), color = "#d62728", linewidth = 1) +
+  geom_ribbon(data = pos_pred_whole, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#d62728", alpha = 0.2, color = NA) +
+  geom_line(data = neg_pred_whole, aes(x = x, y = predicted), color = "#1f77b4", linewidth = 1) +
+  geom_ribbon(data = neg_pred_whole, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#1f77b4", alpha = 0.2, color = NA) +
+  scale_y_continuous(limits = c(18, 30), breaks = seq(18, 30, by = 2)) +
+  labs(
+    title = "Expected MMSE Trajectory (Whole Cohort)",
+    subtitle = "Red = Glycan Positive, Blue = Glycan Negative",
+    x = "Years since baseline",
+    y = "MMSE"
+  ) +
+  theme_bw(base_size = 12)
+
+print(plot_main)
+
+# APOE4 carrier subgroup
+
+apoe4 <- filter(df_long, AnyE4_2014 == 1)
+
+model_apoe <- lmer(
+  MMSE ~ time_years * glycan_positive + age + sex + educ3trnew + 
+    gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = apoe4,
+  REML = TRUE,
+  control = ctrl
+)
+summary(model_apoe)
+
+# Stratify APOE4 carriers by glycan status
+apoe_pos <- subset(df_long, AnyE4_2014 == 1 & glycan_positive == "1")
+apoe_neg <- subset(df_long, AnyE4_2014 == 1 & glycan_positive == "0")
+
+posmodel_apoe <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = apoe_pos,
+  REML = FALSE,
+  control = ctrl
+)
+pos_pred_apoe <- ggpredict(posmodel_apoe, terms = "time_years [all]")
+
+negmodel_apoe <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = apoe_neg,
+  REML = FALSE,
+  control = ctrl
+)
+neg_pred_apoe <- ggpredict(negmodel_apoe, terms = "time_years [all]")
+
+plot_apoe <- ggplot() + 
+  geom_line(data = pos_pred_apoe, aes(x = x, y = predicted), color = "#d62728", linewidth = 1) +
+  geom_ribbon(data = pos_pred_apoe, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#d62728", alpha = 0.2, color = NA) +
+  geom_line(data = neg_pred_apoe, aes(x = x, y = predicted), color = "#1f77b4", linewidth = 1) +
+  geom_ribbon(data = neg_pred_apoe, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#1f77b4", alpha = 0.2, color = NA) +
+  scale_y_continuous(limits = c(18, 30), breaks = seq(18, 30, by = 2)) +
+  labs(
+    title = "Expected MMSE Trajectory (APOE4 Carriers)",
+    subtitle = "Red = Glycan Positive, Blue = Glycan Negative",
+    x = "Years since baseline",
+    y = "MMSE"
+  ) +
+  theme_bw(base_size = 12)
+
+print(plot_apoe)
+
+# No APOE4 subgroup
+noapoe4 <- filter(df_long, AnyE4_2014 == 0)
+
+model_noapoe <- lmer(
+  MMSE ~ time_years * glycan_positive + age + sex + educ3trnew + 
+    gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = noapoe4,
+  REML = TRUE,
+  control = ctrl
+)
+summary(model_noapoe)
+
+# Stratify APOE4 non-carriers by glycan status
+noapoe_pos <- subset(df_long, AnyE4_2014 == 0 & glycan_positive == "1")
+noapoe_neg <- subset(df_long, AnyE4_2014 == 0 & glycan_positive == "0")
+
+posmodel_noapoe <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = noapoe_pos,
+  REML = FALSE,
+  control = ctrl
+)
+pos_pred_noapoe <- ggpredict(posmodel_noapoe, terms = "time_years [all]")
+
+negmodel_noapoe <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = noapoe_neg,
+  REML = FALSE,
+  control = ctrl
+)
+neg_pred_noapoe <- ggpredict(negmodel_noapoe, terms = "time_years [all]")
+
+plot_noapoe <- ggplot() + 
+  geom_line(data = pos_pred_noapoe, aes(x = x, y = predicted), color = "#d62728", linewidth = 1) +
+  geom_ribbon(data = pos_pred_noapoe, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#d62728", alpha = 0.2, color = NA) +
+  geom_line(data = neg_pred_noapoe, aes(x = x, y = predicted), color = "#1f77b4", linewidth = 1) +
+  geom_ribbon(data = neg_pred_noapoe, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#1f77b4", alpha = 0.2, color = NA) +
+  scale_y_continuous(limits = c(18, 30), breaks = seq(18, 30, by = 2)) +
+  labs(
+    title = "Expected MMSE Trajectory (APOE4 Non-Carriers)",
+    subtitle = "Red = Glycan Positive, Blue = Glycan Negative",
+    x = "Years since baseline",
+    y = "MMSE"
+  ) +
+  theme_bw(base_size = 12)
+
+print(plot_noapoe)
+```
+
+# Exploratory analysis 2: Longitudinal cognition analysis by exact APOE genotype
+
+```{r allele dosage cognition}
+
+#E4/E4
+e4e4 <- filter(df_long, apoe == "E4/E4")
+
+model_e4e4 <- lmer(
+  MMSE ~ time_years * glycan_positive + age + sex + educ3trnew + 
+    gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e4e4,
+  REML = TRUE,
+  control = ctrl
+)
+
+summary(model_e4e4)
+
+# Subset genotype and stratify by glycan status
+e4e4_pos <- subset(df_long, apoe == "E4/E4" & glycan_positive == "1")
+e4e4_neg <- subset(df_long, apoe == "E4/E4" & glycan_positive == "0")
+
+# Model & predictions for glycan positive
+posmodel_e4e4 <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e4e4_pos,
+  REML = FALSE,
+  control = ctrl
+)
+summary(posmodel_e4e4)
+pos_pred_e4e4 <- ggpredict(posmodel_e4e4, terms = "time_years [all]")
+
+# Model & predictions for glycan negative
+negmodel_e4e4 <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e4e4_neg,
+  REML = FALSE,
+  control = ctrl
+)
+summary(negmodel_e4e4)
+neg_pred_e4e4 <- ggpredict(negmodel_e4e4, terms = "time_years [all]")
+
+# Plot E4/E4
+plot_e4e4 <- ggplot() +
+  geom_line(data = pos_pred_e4e4, aes(x = x, y = predicted), color = "#d62728", linewidth = 1) +
+  geom_ribbon(data = pos_pred_e4e4, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#d62728", alpha = 0.2, color = NA) +
+  geom_line(data = neg_pred_e4e4, aes(x = x, y = predicted), color = "#1f77b4", linewidth = 1) +
+  geom_ribbon(data = neg_pred_e4e4, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#1f77b4", alpha = 0.2, color = NA) +
+  scale_y_continuous(limits = c(18, 30), breaks = seq(18, 30, by = 2)) +
+  labs(
+    title = "Expected MMSE Trajectory (E4/E4)",
+    subtitle = "Red = Glycan Positive, Blue = Glycan Negative",
+    x = "Years since baseline",
+    y = "MMSE"
+  ) +
+  theme_bw(base_size = 12)
+
+print(plot_e4e4)
+
+#E3/E4
+e3e4 <- filter(df_long, apoe == "E3/E4")
+
+model_e3e4 <- lmer(
+  MMSE ~ time_years * glycan_positive + age + sex + educ3trnew + 
+    gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e3e4,
+  REML = TRUE,
+  control = ctrl
+)
+summary(model_e3e4)
+
+# Subset genotype and stratify by glycan status
+e3e4_pos <- subset(df_long, apoe == "E3/E4" & glycan_positive == "1")
+e3e4_neg <- subset(df_long, apoe == "E3/E4" & glycan_positive == "0")
+
+# Model & predictions for glycan positive
+posmodel_e3e4 <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e3e4_pos,
+  REML = FALSE,
+  control = ctrl
+)
+summary(posmodel_e3e4)
+pos_pred_e3e4 <- ggpredict(posmodel_e3e4, terms = "time_years [all]")
+
+# Model & predictions for glycan negative
+negmodel_e3e4 <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e3e4_neg,
+  REML = FALSE,
+  control = ctrl
+)
+summary(negmodel_e3e4)
+neg_pred_e3e4 <- ggpredict(negmodel_e3e4, terms = "time_years [all]")
+
+# Plot E3/E4
+plot_e3e4 <- ggplot() +
+  geom_line(data = pos_pred_e3e4, aes(x = x, y = predicted), color = "#d62728", linewidth = 1) +
+  geom_ribbon(data = pos_pred_e3e4, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#d62728", alpha = 0.2, color = NA) +
+  geom_line(data = neg_pred_e3e4, aes(x = x, y = predicted), color = "#1f77b4", linewidth = 1) +
+  geom_ribbon(data = neg_pred_e3e4, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#1f77b4", alpha = 0.2, color = NA) +
+  scale_y_continuous(limits = c(18, 30), breaks = seq(18, 30, by = 2)) +
+  labs(
+    title = "Expected MMSE Trajectory (E3/E4)",
+    subtitle = "Red = Glycan Positive, Blue = Glycan Negative",
+    x = "Years since baseline",
+    y = "MMSE"
+  ) +
+  theme_bw(base_size = 12)
+
+print(plot_e3e4)
+
+#E2/E4
+e2e4 <- filter(df_long, apoe == "E2/E4")
+
+model_e2e4 <- lmer(
+  MMSE ~ time_years * glycan_positive + age + sex + educ3trnew + 
+    gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e2e4,
+  REML = TRUE,
+  control = ctrl
+)
+summary(model_e2e4)
+
+# Subset genotype and stratify by glycan status
+e2e4_pos <- subset(df_long, apoe == "E2/E4" & glycan_positive == "1")
+e2e4_neg <- subset(df_long, apoe == "E2/E4" & glycan_positive == "0")
+
+# Model & predictions for glycan positive
+posmodel_e2e4 <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e2e4_pos,
+  REML = FALSE,
+  control = ctrl
+)
+summary(posmodel_e2e4)
+pos_pred_e2e4 <- ggpredict(posmodel_e2e4, terms = "time_years [all]")
+
+# Model & predictions for glycan negative
+negmodel_e2e4 <- lmer(
+  MMSE ~ time_years + age + sex + educ3trnew + gfap_positive + ptau217_positive + nfl_positive + (1 | Lopnr),
+  data = e2e4_neg,
+  REML = FALSE,
+  control = ctrl
+)
+summary(negmodel_e2e4)
+neg_pred_e2e4 <- ggpredict(negmodel_e2e4, terms = "time_years [all]")
+
+# Plot E2/E4
+plot_e2e4 <- ggplot() +
+  geom_line(data = pos_pred_e2e4, aes(x = x, y = predicted), color = "#d62728", linewidth = 1) +
+  geom_ribbon(data = pos_pred_e2e4, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#d62728", alpha = 0.2, color = NA) +
+  geom_line(data = neg_pred_e2e4, aes(x = x, y = predicted), color = "#1f77b4", linewidth = 1) +
+  geom_ribbon(data = neg_pred_e2e4, aes(x = x, ymin = conf.low, ymax = conf.high), fill = "#1f77b4", alpha = 0.2, color = NA) +
+  scale_y_continuous(limits = c(18, 30), breaks = seq(18, 30, by = 2)) +
+  labs(
+    title = "Expected MMSE Trajectory (E2/E4)",
+    subtitle = "Red = Glycan Positive, Blue = Glycan Negative",
+    x = "Years since baseline",
+    y = "MMSE"
+  ) +
+  theme_bw(base_size = 12)
+
+print(plot_e2e4)
+```
+
+# Survival analysis
+
+```{r Cox regression}
+
+# Add variable "incident dementia during followup"
+snac$dementia <- ifelse(snac$dementia_def22 >= 2 & snac$dementia_def22 <= 8, 1,
+                 ifelse(snac$dementia_def22 == 0, 0, NA))
+
+# Drop individuals without followup
+snac <- subset(snac, time_to_dementia22 != 0)
+
+#Define survival object
+snac$surv_obj <- Surv(time = snac$time_to_dementia22, event = snac$dementia)
+
+# Run Whole Cohort Model
+model_whole <- coxph(surv_obj ~ glycan_positive + age + AnyE4_2014 + sex + educ3trnew + gfap_positive + nfl_positive + ptau217_positive, data = snac)
+
+summary (model_whole)
+
+# Check assumptions
+ph_test <- cox.zph(model_whole)
+ph_test
+plot(ph_test)
+
+# Define base variables
+base_vars <- c("ptau217_positive", "gfap_positive", "nfl_positive", "glycan_positive", "age", "sex", "educ3trnew", "AnyE4_2014")
+
+# Define a function to run Cox models on subgroups
+run_subgroup_cox <- function(data, group_var, covariates) {
+  
+  # Dynamic Formula
+  current_vars <- setdiff(covariates, group_var)
+  f <- as.formula(paste("surv_obj ~", paste(current_vars, collapse = " + ")))
+  
+  # Pipeline: Filter NAs -> Group -> Nest -> Model -> Tidy
+  results <- data %>%
+    drop_na(all_of(group_var)) %>% 
+    group_by(across(all_of(group_var))) %>%
+    nest() %>%
+    mutate(
+      model = map(data, ~coxph(f, data = .x)),
+      tidy_stats = map(model, ~tidy(.x, exponentiate = TRUE, conf.int = TRUE))
+    ) %>%
+    unnest(tidy_stats) %>%
+    select(-data, -model)
+  
+  return(results)
+}
+
+# Run the models
+
+  # Stratify by APOE4 Status
+  res_apoe <- run_subgroup_cox(snac, "AnyE4_2014", base_vars)
+  print (res_apoe)
+
+  # Stratify by sex
+  res_sex <- run_subgroup_cox(snac, "sex", base_vars)
+  print (res_sex)
+
+```
+
+# Competing risk analysis (Fine-Gray model)
+
+```{r competing risk}
+
+# Ensure date formatting
+snac$Start <- as.Date(snac$Start)
+snac$death_date_new <- as.Date(snac$death_date_new)
+
+# Calculate time to death from baseline in years
+snac$time_to_death <- as.numeric(difftime(snac$death_date_new, snac$Start, units = "days")) / 365.25
+
+# Define multi-state event status
+# 0 = Censored, 1 = Dementia, 2 = Death without dementia
+snac$event_cr <- ifelse(snac$dementia == 1, 1,
+                 ifelse(snac$dementia == 0 & snac$dead_register_new == 1, 2,
+                 ifelse(snac$dementia == 0 & snac$dead_register_new == 0, 0, NA)))
+
+# Define event time for competing risks
+snac$time_cr <- ifelse(snac$event_cr == 2 & !is.na(snac$time_to_death), 
+                       snac$time_to_death, 
+                       snac$time_to_dementia22)
+
+# Convert competing risk event to a factor
+snac$event_cr_factor <- factor(snac$event_cr, levels = c(0, 1, 2), labels = c("Censored", "Dementia", "Death"))
+
+# Drop individuals without followup or missing event/time
+snac <- subset(snac, time_cr != 0 & !is.na(time_cr) & !is.na(event_cr_factor))
+
+# Unadjusted Competing Risk Model
+cr_model_glycan_only <- crr(
+  Surv(time_cr, event_cr_factor) ~ glycan_positive,
+  data = snac,
+  failcode = "Dementia"
+)
+
+summary(cr_model_glycan_only)
+tidy(cr_model_glycan_only, exponentiate = TRUE, conf.int = TRUE)
+print (cr_model_glycan_only)
+
+# Fine-Gray Subdistribution Hazard Model for Dementia
+cr_model_whole <- crr(
+  Surv(time_cr, event_cr_factor) ~ glycan_positive + age + AnyE4_2014 + sex + 
+    educ3trnew + gfap_positive + nfl_positive + ptau217_positive,
+  data = snac,
+  failcode = "Dementia"
+)
+
+# Output summary with Subdistribution Hazard Ratios (sHR)
+summary(cr_model_whole)
+tidy(cr_model_whole, exponentiate = TRUE, conf.int = TRUE)
+print (cr_model_whole)
+
+# Subgroup analysis
+
+base_vars <- c("ptau217_positive", "gfap_positive", "nfl_positive", "glycan_positive", "age", "sex", "educ3trnew", "AnyE4_2014")
+
+run_subgroup_crr <- function(data, group_var, covariates) {
+  
+  current_vars <- setdiff(covariates, group_var)
+  f <- as.formula(paste("Surv(time_cr, event_cr_factor) ~", paste(current_vars, collapse = " + ")))
+  
+  results <- data %>%
+    drop_na(all_of(group_var)) %>% 
+    group_by(across(all_of(group_var))) %>% 
+    nest() %>% 
+    mutate(
+      model = map(data, ~crr(f, data = .x, failcode = "Dementia")),
+      tidy_stats = map(model, ~tidy(.x, exponentiate = TRUE, conf.int = TRUE))
+    ) %>% 
+    unnest(tidy_stats) %>% 
+    select(-data, -model)
+  
+  return(results)
+}
+
+# Stratify by APOE4 Status
+res_cr_apoe <- run_subgroup_crr(snac, "AnyE4_2014", base_vars)
+print(res_cr_apoe)
+
+# Stratify by sex
+res_cr_sex <- run_subgroup_crr(snac, "sex", base_vars)
+print(res_cr_sex)
+```
+
+# Forest plot
+
+```{r Forest plot}
+# Run Whole Cohort Model
+model_whole <- coxph(surv_obj ~ glycan_positive + age + sex + educ3trnew + AnyE4_2014 + gfap_positive + ptau217_positive + nfl_positive, data = snac)
+
+res_whole <- tidy(model_whole, exponentiate = TRUE, conf.int = TRUE) %>%
+  mutate(group_label = "Whole Cohort", category = "All")
+
+# Process Subgroups (Clean labels for the plot)
+
+# Process APOE
+plot_apoe <- res_apoe %>%
+  mutate(group_label = ifelse(AnyE4_2014 == 0, "APOE4 Non-Carrier", "APOE4 Carrier"),
+         category = "APOE4 allele status")
+
+# Process Sex
+plot_sex <- res_sex %>%
+  mutate(group_label = ifelse(sex == 0, "Male", "Female"),
+         category = "Sex")
+
+# Combine everything and filter for 'glycan_positive'
+plot_data <- bind_rows(res_whole, plot_apoe, plot_sex) %>%
+  filter(grepl("glycan_positive", term)) %>% 
+  select(term, estimate, conf.low, conf.high, p.value, group_label, category)
+
+# Define order of y-axis (Whole cohort at bottom, subgroups above)
+plot_data$group_label <- factor(plot_data$group_label, 
+                                levels = c("Whole Cohort", 
+                                           "APOE4 Non-Carrier", "APOE4 Carrier", 
+                                           "Male", "Female"))
+
+ggplot(plot_data, aes(x = estimate, y = group_label, color = category)) +
+  
+  # Add reference line at HR = 1
+  geom_vline(xintercept = 1, linetype = "dashed", color = "gray50") +
+  
+  # Add Error Bars (95% CI)
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2, size = 0.8) +
+  
+  # Add Point Estimates (HR)
+  geom_point(size = 3.5, shape = 18) +
+  
+  # Add text labels for the actual HR values
+  geom_text(aes(label = paste0(round(estimate, 2), " (", 
+                               round(conf.low, 2), "-", 
+                               round(conf.high, 2), ")")), 
+            vjust = -1, size = 3, show.legend = FALSE) +
+  
+  # Customization
+  scale_color_brewer(palette = "Dark2") + 
+  labs(
+    x = "Adjusted Hazard Ratio (aHR) of glycan positivity for dementia",
+    y = "",
+    color = "Subgroup Type"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold"),
+    axis.text.y = element_text(face = "bold")
+  )
+```
+
+# Cumulative incidence plot
+
+```{r Glycan incidence plot}
+# Fit the survival curve
+fit <- survfit(Surv(time_to_dementia22, dementia) ~ glycan_positive, data = snac)
+
+# Fit Cox model to get HRs compared to reference
+cox_mod <- coxph(Surv(time_to_dementia22, dementia) ~ glycan_positive, data = snac)
+summary(cox_mod)
+
+# Manual annotation
+hr_text <- paste0(
+  "Ref: Glycan-\n",
+  "HR (Glycan+): 1.31 [1.05, 1.64]\n"
+)
+
+# Plotting
+p <- ggsurvplot(
+  fit,
+  data = snac,
+  fun = "event",           
+  risk.table = TRUE,       
+  pval = TRUE,             
+  conf.int = TRUE,        
+  legend.title = "Groups",
+  xlab = "Years from baseline",
+  ylab = "Cumulative incidence of dementia",
+  ggtheme = theme_bw()     
+)
+
+p$plot <- p$plot + annotate("text", x = 1, y = 0.8, label = hr_text, hjust = 0) 
+
+# Add text
+print(p)
+```
+
+```{r Glycan and APOE incidence plot}
+
+# Create a combined factor variable for the 4 groups
+snac$strata <- interaction(snac$AnyE4_2014, snac$glycan_positive)
+
+# Rename levels for clarity
+levels(snac$strata) <- c("Ref: APOE4-/Glycan-", "APOE4+/Glycan-", "APOE4-/Glycan+", "Both+")
+
+# Re-level to ensure E4-/Gly- is the reference
+snac$strata <- relevel(snac$strata, ref = "Ref: APOE4-/Glycan-")
+
+# Fit the survival curve
+fit <- survfit(Surv(time_to_dementia22, dementia) ~ strata, data = snac)
+
+# Fit Cox model to get HRs compared to reference
+cox_mod <- coxph(Surv(time_to_dementia22, dementia) ~ strata, data = snac)
+summary(cox_mod)
+
+# Manual annotation
+hr_text <- paste0(
+  "Ref: APOE4-/Glycan-\n",
+  "HR (APOE4+/Glycan-): 1.79 [1.29, 2.48]\n",
+  "HR (APOE4-/Glycan+): 1.50 [1.12, 2.01]\n",
+  "HR (Both+): 1.97 [1.40, 2.77]"
+)
+
+# Plotting
+p <- ggsurvplot(
+  fit,
+  data = snac,
+  fun = "event",           
+  risk.table = TRUE,       
+  pval = TRUE,             
+  conf.int = TRUE,        
+  legend.title = "Groups",
+  xlab = "Years from baseline",
+  ylab = "Cumulative incidence of dementia",
+  ggtheme = theme_bw()     
+)
+
+p$plot <- p$plot + annotate("text", x = 1, y = 0.8, label = hr_text, hjust = 0) 
+
+# Add text
+print(p)
+```
+
+# Exploratory analysis 3: Cumulative incidence plot by exact APOE genotype
+
+```{r cumulative incidence}
+
+# Filter dataset for the 3 target genotypes and ensure complete variables
+snac_sub <- snac %>%
+  filter(
+    apoe %in% c("E2/E4", "E3/E4", "E4/E4"),
+    !is.na(glycan_positive),
+    !is.na(time_to_dementia22),
+    !is.na(dementia)
+  )
+
+# Create readable 6-group strata variable
+snac_sub <- snac_sub %>%
+  mutate(
+    glycan_label = if_else(glycan_positive == 1, "Glycan+", "Glycan-"),
+    strata = factor(
+      paste0(apoe, " (", glycan_label, ")"),
+      levels = c(
+        "E2/E4 (Glycan-)", "E2/E4 (Glycan+)",
+        "E3/E4 (Glycan-)", "E3/E4 (Glycan+)",
+        "E4/E4 (Glycan-)", "E4/E4 (Glycan+)"
+      )
+    )
+  )
+
+# Set reference category
+contrasts(snac_sub$strata) <- contr.treatment(
+  levels(snac_sub$strata), 
+  base = 3
+)
+
+# Fit Survival and Cox Proportional Hazards Models
+fit <- survfit(Surv(time_to_dementia22, dementia) ~ strata, data = snac_sub)
+cox_mod <- coxph(Surv(time_to_dementia22, dementia) ~ strata, data = snac_sub)
+
+# Generate HR annotation string from the Cox model
+cox_summary <- summary(cox_mod)
+ref_group   <- levels(snac_sub$strata)[1]
+
+hr_lines <- c(paste0("Ref: E3/E4 (Glycan-)"))
+coef_tab <- cox_summary$conf.int
+
+for (i in seq_len(nrow(coef_tab))) {
+  group_name <- gsub("^strata", "", rownames(coef_tab)[i])
+  hr   <- sprintf("%.2f", coef_tab[i, "exp(coef)"])
+  low  <- sprintf("%.2f", coef_tab[i, "lower .95"])
+  high <- sprintf("%.2f", coef_tab[i, "upper .95"])
+  hr_lines <- c(hr_lines, paste0("HR (", group_name, "): ", hr, " [", low, ", ", high, "]"))
+}
+
+hr_text <- paste(hr_lines, collapse = "\n")
+
+# Plot Cumulative Incidence
+p <- ggsurvplot(
+  fit,
+  data           = snac_sub,
+  fun            = "event",          
+  risk.table     = TRUE,
+  pval           = TRUE,
+  conf.int       = FALSE,             
+  legend.title   = "APOE / Glycan Status",
+  legend.labs    = levels(snac_sub$strata),
+  palette        = "Paired",          
+  xlab           = "Years from baseline",
+  ylab           = "Cumulative incidence of dementia",
+  ggtheme        = theme_bw()
+)
+
+# Add HR text annotation to the incidence plot
+p$plot <- p$plot + 
+  annotate("text", x = 0.5, y = 0.85, label = hr_text, hjust = 0, size = 3.2)
+
+# Print final figure with risk table
+print(p)
+```
+
+
+# RMS model
+
+```{r rms model}
+
+# Convert relevant covariates to factors
+factor_vars <- c("sex", "educ3trnew", "AnyE4_2014", "gfap_positive", "nfl_positive", "ptau217_positive")
+
+snac[factor_vars] <- lapply(snac[factor_vars], as.factor)
+
+# Subset and Clean
+vars_needed <- c("time_to_dementia22", "dementia", "age", "PhaE_z", "PhaE", factor_vars)
+snac_clean <- na.omit(snac[, vars_needed])
+
+# Setup Model Distribution
+dd <- datadist(snac_clean)
+options(datadist = 'dd')
+
+# Unadjusted model
+fit_rcs <- cph(Surv(time_to_dementia22, dementia) ~ 
+                 rcs(PhaE_z, 3), 
+                 data = snac_clean, x=TRUE, y=TRUE)
+
+# Fit the Adjusted Cox Model with Splines
+fit_rcs <- cph(Surv(time_to_dementia22, dementia) ~ 
+                 rcs(PhaE_z, 3) + gfap_positive + ptau217_positive + nfl_positive + age + sex + 
+                 educ3trnew + AnyE4_2014, 
+                 data = snac_clean, x=TRUE, y=TRUE)
+
+# Extract predictions for the plot
+pred_hr <- Predict(fit_rcs, PhaE_z, ref.zero = TRUE, fun = exp)
+pred_df <- as.data.frame(pred_hr)
+
+# Create the Final Plot
+ggplot() +
+  geom_ribbon(data = pred_df, aes(x = PhaE_z, ymin = lower, ymax = upper), fill = "grey80", alpha = 0.4) +
+  geom_line(data = pred_df, aes(x = PhaE_z, y = yhat), color = "black", size = 1.2) +
+  geom_hline(yintercept = 1, linetype = "solid", color = "#b2182b", size = 0.7) +
+  scale_y_continuous(trans = 'log2', breaks = c(0.5, 1, 2, 4, 8, 16, 32, 64)) +
+  labs(x = "Bisecting GlcNAc [z-score]", 
+       y = "Adjusted hazard ratio (aHR) for dementia", 
+       title = "") +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())
+```
